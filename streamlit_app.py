@@ -41,6 +41,30 @@ TPE,NRT,2026-07,13800,13200,9200,21000,11500
 TPE,ICN,2026-07,10200,9600,6200,15800,8300
 """
 
+AIRPORT_OPTIONS = {
+    "台北桃園 TPE": "TPE",
+    "台北松山 TSA": "TSA",
+    "高雄 KHH": "KHH",
+    "大阪關西 KIX": "KIX",
+    "福岡 FUK": "FUK",
+    "沖繩那霸 OKA": "OKA",
+    "東京成田 NRT": "NRT",
+    "東京羽田 HND": "HND",
+    "首爾仁川 ICN": "ICN",
+    "釜山 PUS": "PUS",
+    "香港 HKG": "HKG",
+    "曼谷 BKK": "BKK",
+    "新加坡 SIN": "SIN",
+    "吉隆坡 KUL": "KUL",
+}
+
+AIRPORT_LABEL_BY_CODE = {code: label for label, code in AIRPORT_OPTIONS.items()}
+
+
+def airport_label(code: str) -> str:
+    """Return a readable airport label for a code."""
+    return AIRPORT_LABEL_BY_CODE.get(code, code)
+
 
 def ntd(value):
     """Format a number as NT dollars."""
@@ -165,6 +189,10 @@ def display(df):
         st.info("目前沒有符合條件的資料。")
         return
     view = df.copy()
+    if "origin" in view:
+        view["origin"] = view["origin"].map(airport_label)
+    if "destination" in view:
+        view["destination"] = view["destination"].map(airport_label)
     for col in ["departure_date", "return_date"]:
         if col in view:
             view[col] = view[col].dt.strftime("%Y-%m-%d")
@@ -198,8 +226,15 @@ st.caption("全免費雲端版：使用範例 CSV 資料，不串航空 API，�
 
 flights, history = load_data()
 st.sidebar.header("搜尋條件")
-origin = st.sidebar.text_input("出發地", "TPE").strip().upper()
-destination = st.sidebar.selectbox("目的地", ["KIX", "FUK", "OKA", "NRT", "ICN"])
+origin_label = st.sidebar.selectbox("出發地", list(AIRPORT_OPTIONS.keys()), index=0)
+destination_label = st.sidebar.selectbox(
+    "目的地",
+    list(AIRPORT_OPTIONS.keys()),
+    index=list(AIRPORT_OPTIONS.keys()).index("大阪關西 KIX"),
+)
+origin = AIRPORT_OPTIONS[origin_label]
+destination = AIRPORT_OPTIONS[destination_label]
+st.sidebar.caption(f"系統會自動使用機場代碼：{origin} → {destination}")
 month = st.sidebar.text_input("出發月份", "2026-07")
 budget = st.sidebar.number_input("預算", 1000, 100000, 12000, 500)
 min_nights = st.sidebar.number_input("停留天數最小值", 1, 30, 3)
@@ -238,6 +273,7 @@ tabs = st.tabs(["航班搜尋", "票價分析", "日期最佳化", "降價提醒
 
 with tabs[0]:
     st.subheader("隱藏航班搜尋器")
+    st.caption(f"目前查詢：{airport_label(origin)} → {airport_label(destination)}")
     if use_ignav:
         st.info(st.session_state.ignav_message or "按側邊欄「查詢 Ignav 即時票價」後，會使用 API 結果；尚未查詢前會顯示 CSV 範例資料。")
     c1, c2, c3 = st.columns(3)
@@ -277,7 +313,7 @@ with tabs[3]:
         st.text_area("通知文字預覽", "目前沒有符合條件的降價通知。", height=160)
     else:
         r = alerts.iloc[0]
-        st.text_area("通知文字預覽", f"【機票降價通知】\n{r.origin} → {r.destination}\n日期：{r.departure_date:%Y-%m-%d} ～ {r.return_date:%Y-%m-%d}\n航空：{r.airline}\n價格：{ntd(r.total_price)}\n是否直飛：{'是' if r.is_direct else '否'}\n來源：{r.source}", height=220)
+        st.text_area("通知文字預覽", f"【機票降價通知】\n{airport_label(r.origin)} → {airport_label(r.destination)}\n日期：{r.departure_date:%Y-%m-%d} ～ {r.return_date:%Y-%m-%d}\n航空：{r.airline}\n價格：{ntd(r.total_price)}\n是否直飛：{'是' if r.is_direct else '否'}\n來源：{r.source}", height=220)
 
 with tabs[4]:
     st.subheader("避開昂貴日期")
