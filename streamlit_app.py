@@ -6,6 +6,7 @@ from io import StringIO
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 
 
@@ -78,6 +79,86 @@ def search(df, origin, destination, month, budget, direct_only, include_lcc):
     return out.sort_values(["total_price", "value_score"], ascending=[True, False])
 
 
+def ignav_key() -> str:
+    """Read Ignav API key from Streamlit secrets."""
+    try:
+        return str(st.secrets.get("IGNAV_API_KEY", "")).strip()
+    except Exception:
+        return ""
+
+
+def fetch_ignav_round_trip(api_key: str, origin: str, destination: str, departure_date, return_date, adults: int, direct_only: bool):
+    """Fetch live round-trip fares from Ignav and return a dataframe plus a status message."""
+    payload = {
+        "origin": origin,
+        "destination": destination,
+        "departure_date": departure_date.strftime("%Y-%m-%d"),
+        "return_date": return_date.strftime("%Y-%m-%d"),
+        "adults": adults,
+        "cabin_class": "economy",
+        "market": "TW",
+    }
+    if direct_only:
+        payload["max_stops"] = 0
+
+    try:
+        response = requests.post(
+            "https://ignav.com/api/fares/round-trip",
+            headers={"X-Api-Key": api_key, "Content-Type": "application/json"},
+            json=payload,
+            timeout=25,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        return pd.DataFrame(), f"Ignav API 查詢失敗：{exc}"
+    except ValueError:
+        return pd.DataFrame(), "Ignav API 回傳格式不是 JSON。"
+
+    rows = []
+    for item in data.get("itineraries", []):
+        outbound = item.get("outbound", {}) or {}
+        inbound = item.get("inbound", {}) or {}
+        outbound_segments = outbound.get("segments", []) or []
+        inbound_segments = inbound.get("segments", []) or []
+        price = item.get("price", {}) or {}
+        amount = price.get("amount")
+        currency = price.get("currency", "TWD")
+        is_direct = len(outbound_segments) <= 1 and len(inbound_segments) <= 1
+        transfer_points = []
+        for segment in outbound_segments[:-1] + inbound_segments[:-1]:
+            airport = segment.get("arrival_airport")
+            if airport:
+                transfer_points.append(airport)
+
+        rows.append(
+            {
+                "origin": origin,
+                "destination": destination,
+                "departure_date": pd.to_datetime(payload["departure_date"]),
+                "return_date": pd.to_datetime(payload["return_date"]),
+                "airline": outbound.get("carrier") or "Ignav itinerary",
+                "airline_type": "API",
+                "is_direct": is_direct,
+                "transfer_city": ", ".join(transfer_points),
+                "total_price": pd.to_numeric(amount, errors="coerce"),
+                "price_currency": currency,
+                "flight_duration_hours": round((float(outbound.get("duration_minutes", 0)) + float(inbound.get("duration_minutes", 0))) / 60, 1),
+                "baggage_included": False,
+                "source": "Ignav API",
+                "ignav_id": item.get("ignav_id", ""),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(), "Ignav API 沒有回傳符合條件的航班，已保留 CSV 範例資料可比較。"
+
+    out = pd.DataFrame(rows).dropna(subset=["total_price"]).sort_values("total_price")
+    out["price_status"] = "API result"
+    out["value_score"] = 80
+    return out, f"Ignav API 已回傳 {len(out)} 筆票價。"
+
+
 def display(df):
     """Show a formatted dataframe."""
     if df.empty:
@@ -89,7 +170,10 @@ def display(df):
             view[col] = view[col].dt.strftime("%Y-%m-%d")
     for col in ["total_price", "lowest_price"]:
         if col in view:
-            view[col] = view[col].apply(ntd)
+            if "price_currency" in view and col == "total_price":
+                view[col] = view.apply(lambda row: ntd(row[col]) if row.get("price_currency", "TWD") == "TWD" else f"{float(row[col]):,.0f} {row.get('price_currency')}", axis=1)
+            else:
+                view[col] = view[col].apply(ntd)
     st.dataframe(view, use_container_width=True, hide_index=True)
 
 
@@ -122,12 +206,40 @@ min_nights = st.sidebar.number_input("停留天數最小值", 1, 30, 3)
 max_nights = st.sidebar.number_input("停留天數最大值", 1, 60, 7)
 direct_only = st.sidebar.checkbox("是否只看直飛")
 include_lcc = st.sidebar.checkbox("是否包含廉航", True)
+st.sidebar.divider()
+st.sidebar.subheader("即時票價 API")
+api_key = ignav_key()
+use_ignav = st.sidebar.checkbox("使用 Ignav 即時查詢", value=bool(api_key))
+api_departure_date = st.sidebar.date_input("API 出發日期", pd.to_datetime(f"{month}-01").date())
+api_return_date = st.sidebar.date_input("API 回程日期", pd.to_datetime(f"{month}-06").date())
+api_adults = st.sidebar.number_input("成人數", 1, 9, 1)
+
+if "ignav_results" not in st.session_state:
+    st.session_state.ignav_results = pd.DataFrame()
+if "ignav_message" not in st.session_state:
+    st.session_state.ignav_message = ""
+
+if use_ignav and st.sidebar.button("查詢 Ignav 即時票價"):
+    if not api_key:
+        st.session_state.ignav_results = pd.DataFrame()
+        st.session_state.ignav_message = "尚未設定 IGNAV_API_KEY，會使用 CSV 範例資料。"
+    elif api_return_date < api_departure_date:
+        st.session_state.ignav_results = pd.DataFrame()
+        st.session_state.ignav_message = "回程日期不可早於出發日期。"
+    else:
+        st.session_state.ignav_results, st.session_state.ignav_message = fetch_ignav_round_trip(
+            api_key, origin, destination, api_departure_date, api_return_date, int(api_adults), direct_only
+        )
 
 results = search(flights, origin, destination, month, budget, direct_only, include_lcc)
+if use_ignav and not st.session_state.ignav_results.empty:
+    results = st.session_state.ignav_results.copy()
 tabs = st.tabs(["航班搜尋", "票價分析", "日期最佳化", "降價提醒", "昂貴日期熱圖", "訂票策略庫"])
 
 with tabs[0]:
     st.subheader("隱藏航班搜尋器")
+    if use_ignav:
+        st.info(st.session_state.ignav_message or "按側邊欄「查詢 Ignav 即時票價」後，會使用 API 結果；尚未查詢前會顯示 CSV 範例資料。")
     c1, c2, c3 = st.columns(3)
     c1.metric("符合航班", len(results))
     c2.metric("最低票價", ntd(results["total_price"].min()) if not results.empty else "-")
