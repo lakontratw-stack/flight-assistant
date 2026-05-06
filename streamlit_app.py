@@ -231,6 +231,22 @@ def display(df):
     st.dataframe(view, use_container_width=True, hide_index=True)
 
 
+def airline_price_summary(df):
+    """Build airline-level price statistics without summing ticket prices."""
+    if df.empty:
+        return pd.DataFrame(columns=["airline", "lowest_price", "average_price", "fare_count"])
+    return (
+        df.groupby("airline", as_index=False)
+        .agg(
+            lowest_price=("total_price", "min"),
+            average_price=("total_price", "mean"),
+            fare_count=("total_price", "count"),
+        )
+        .sort_values(["lowest_price", "average_price"])
+        .reset_index(drop=True)
+    )
+
+
 def strategy(history, origin, destination, month, current_price):
     """Analyze whether to buy, wait, or monitor."""
     row = history[(history["origin"].eq(origin)) & (history["destination"].eq(destination)) & (history["month"].eq(month))]
@@ -329,7 +345,21 @@ with tabs[0]:
     c3.metric("預算內", int((results["total_price"] <= budget).sum()) if not results.empty else 0)
     display(results)
     if not results.empty:
-        st.bar_chart(results.set_index("airline")["total_price"])
+        st.markdown("**各航空最低票價比較**")
+        airline_summary = airline_price_summary(results)
+        st.bar_chart(airline_summary.set_index("airline")["lowest_price"])
+        st.caption("圖表使用每家航空的最低票價，不會把同一家航空的多筆票價加總。")
+        summary_view = airline_summary.rename(
+            columns={
+                "airline": "航空公司",
+                "lowest_price": "最低票價",
+                "average_price": "平均票價",
+                "fare_count": "筆數",
+            }
+        )
+        summary_view["最低票價"] = summary_view["最低票價"].apply(ntd)
+        summary_view["平均票價"] = summary_view["平均票價"].apply(ntd)
+        st.dataframe(summary_view, use_container_width=True, hide_index=True)
 
 with tabs[1]:
     st.subheader("票價策略分析")
