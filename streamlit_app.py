@@ -58,9 +58,30 @@ AIRPORT_OPTIONS = {
     "首爾仁川 ICN": "ICN",
     "釜山 PUS": "PUS",
     "香港 HKG": "HKG",
+    "澳門 MFM": "MFM",
+    "上海浦東 PVG": "PVG",
+    "上海虹橋 SHA": "SHA",
+    "北京首都 PEK": "PEK",
+    "北京大興 PKX": "PKX",
     "曼谷 BKK": "BKK",
+    "清邁 CNX": "CNX",
     "新加坡 SIN": "SIN",
     "吉隆坡 KUL": "KUL",
+    "馬尼拉 MNL": "MNL",
+    "胡志明市 SGN": "SGN",
+    "河內 HAN": "HAN",
+    "峴港 DAD": "DAD",
+    "雅加達 CGK": "CGK",
+    "峇里島 DPS": "DPS",
+    "雪梨 SYD": "SYD",
+    "墨爾本 MEL": "MEL",
+    "洛杉磯 LAX": "LAX",
+    "舊金山 SFO": "SFO",
+    "紐約 JFK": "JFK",
+    "倫敦希斯洛 LHR": "LHR",
+    "巴黎戴高樂 CDG": "CDG",
+    "阿姆斯特丹 AMS": "AMS",
+    "法蘭克福 FRA": "FRA",
 }
 
 AIRPORT_LABEL_BY_CODE = {code: label for label, code in AIRPORT_OPTIONS.items()}
@@ -232,13 +253,34 @@ st.caption("全免費雲端版：使用範例 CSV 資料，不串航空 API，�
 flights, history = load_data()
 st.sidebar.header("搜尋條件")
 origin_label = st.sidebar.selectbox("出發地", list(AIRPORT_OPTIONS.keys()), index=0)
+destination_query = st.sidebar.text_input("搜尋目的地（城市/機場/代碼）", "")
+destination_candidates = [
+    label
+    for label in AIRPORT_OPTIONS
+    if not destination_query
+    or destination_query.lower() in label.lower()
+    or destination_query.upper() == AIRPORT_OPTIONS[label]
+]
+if not destination_candidates:
+    destination_candidates = ["找不到內建結果，請在下方輸入 IATA 三碼"]
 destination_label = st.sidebar.selectbox(
     "目的地",
-    list(AIRPORT_OPTIONS.keys()),
-    index=list(AIRPORT_OPTIONS.keys()).index("大阪關西 KIX"),
+    destination_candidates,
+    index=0 if destination_query else destination_candidates.index("大阪關西 KIX"),
 )
 origin = AIRPORT_OPTIONS[origin_label]
-destination = AIRPORT_OPTIONS[destination_label]
+custom_destination = st.sidebar.text_input("自訂目的地 IATA 三碼（找不到時使用）", "").strip().upper()
+if custom_destination:
+    if len(custom_destination) == 3 and custom_destination.isalpha():
+        destination = custom_destination
+        destination_label = f"自訂目的地 {custom_destination}"
+    else:
+        st.sidebar.warning("自訂目的地請輸入 3 個英文字母，例如 NGO、LAX、CDG。")
+        destination = AIRPORT_OPTIONS.get(destination_label, "KIX")
+elif destination_label in AIRPORT_OPTIONS:
+    destination = AIRPORT_OPTIONS[destination_label]
+else:
+    destination = "KIX"
 st.sidebar.caption(f"系統會自動使用機場代碼：{origin} → {destination}")
 month = st.sidebar.text_input("出發月份", "2026-07")
 budget = st.sidebar.number_input("預算", 1000, 100000, 12000, 500)
