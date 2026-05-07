@@ -86,10 +86,41 @@ AIRPORT_OPTIONS = {
 
 AIRPORT_LABEL_BY_CODE = {code: label for label, code in AIRPORT_OPTIONS.items()}
 
+AIRLINE_LABELS = {
+    "BR": "長榮航空 EVA Air",
+    "EVA": "長榮航空 EVA Air",
+    "EVA Air": "長榮航空 EVA Air",
+    "CI": "中華航空 China Airlines",
+    "China Airlines": "中華航空 China Airlines",
+    "JX": "星宇航空 Starlux",
+    "Starlux": "星宇航空 Starlux",
+    "Starlux Airlines": "星宇航空 Starlux",
+    "IT": "台灣虎航 Tigerair Taiwan",
+    "Tigerair Taiwan": "台灣虎航 Tigerair Taiwan",
+    "MM": "樂桃航空 Peach",
+    "Peach": "樂桃航空 Peach",
+    "GK": "捷星日本 Jetstar Japan",
+    "Jetstar Japan": "捷星日本 Jetstar Japan",
+    "TW": "德威航空 T'way Air",
+    "T'way Air": "德威航空 T'way Air",
+    "T’way Air": "德威航空 T'way Air",
+    "UO": "香港快運 HK Express",
+    "HK Express": "香港快運 HK Express",
+    "Ignav itinerary": "Ignav 即時票價 Ignav itinerary",
+}
+
 
 def airport_label(code: str) -> str:
     """Return a readable airport label for a code."""
     return AIRPORT_LABEL_BY_CODE.get(code, code)
+
+
+def airline_label(name: str) -> str:
+    """Return a bilingual airline label when a mapping is available."""
+    if pd.isna(name):
+        return "-"
+    text = str(name).strip()
+    return AIRLINE_LABELS.get(text, text)
 
 
 def ntd(value):
@@ -219,6 +250,8 @@ def display(df):
         view["origin"] = view["origin"].map(airport_label)
     if "destination" in view:
         view["destination"] = view["destination"].map(airport_label)
+    if "airline" in view:
+        view["airline"] = view["airline"].map(airline_label)
     for col in ["departure_date", "return_date"]:
         if col in view:
             view[col] = view[col].dt.strftime("%Y-%m-%d")
@@ -234,9 +267,11 @@ def display(df):
 def airline_price_summary(df):
     """Build airline-level price statistics without summing ticket prices."""
     if df.empty:
-        return pd.DataFrame(columns=["airline", "lowest_price", "average_price", "fare_count"])
+        return pd.DataFrame(columns=["airline", "airline_display", "lowest_price", "average_price", "fare_count"])
+    summary_source = df.copy()
+    summary_source["airline_display"] = summary_source["airline"].map(airline_label)
     return (
-        df.groupby("airline", as_index=False)
+        summary_source.groupby(["airline", "airline_display"], as_index=False)
         .agg(
             lowest_price=("total_price", "min"),
             average_price=("total_price", "mean"),
@@ -347,11 +382,11 @@ with tabs[0]:
     if not results.empty:
         st.markdown("**各航空最低票價比較**")
         airline_summary = airline_price_summary(results)
-        st.bar_chart(airline_summary.set_index("airline")["lowest_price"])
+        st.bar_chart(airline_summary.set_index("airline_display")["lowest_price"])
         st.caption("圖表使用每家航空的最低票價，不會把同一家航空的多筆票價加總。")
-        summary_view = airline_summary.rename(
+        summary_view = airline_summary.drop(columns=["airline"]).rename(
             columns={
-                "airline": "航空公司",
+                "airline_display": "航空公司",
                 "lowest_price": "最低票價",
                 "average_price": "平均票價",
                 "fare_count": "筆數",
@@ -390,7 +425,7 @@ with tabs[3]:
         st.text_area("通知文字預覽", "目前沒有符合條件的降價通知。", height=160)
     else:
         r = alerts.iloc[0]
-        st.text_area("通知文字預覽", f"【機票降價通知】\n{airport_label(r.origin)} → {airport_label(r.destination)}\n日期：{r.departure_date:%Y-%m-%d} ～ {r.return_date:%Y-%m-%d}\n航空：{r.airline}\n價格：{ntd(r.total_price)}\n是否直飛：{'是' if r.is_direct else '否'}\n來源：{r.source}", height=220)
+        st.text_area("通知文字預覽", f"【機票降價通知】\n{airport_label(r.origin)} → {airport_label(r.destination)}\n日期：{r.departure_date:%Y-%m-%d} ～ {r.return_date:%Y-%m-%d}\n航空：{airline_label(r.airline)}\n價格：{ntd(r.total_price)}\n是否直飛：{'是' if r.is_direct else '否'}\n來源：{r.source}", height=220)
 
 with tabs[4]:
     st.subheader("避開昂貴日期")
